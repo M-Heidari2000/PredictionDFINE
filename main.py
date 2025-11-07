@@ -45,6 +45,7 @@ if __name__ == "__main__":
     parser.add_argument("--run-name", type=str, default="DFINE", help="name of the run")
     parser.add_argument("--filtering-weight", type=float, default=1.0, help="weight for the filtering in the loss")
     parser.add_argument("--test-k", nargs="+", type=int, help="a list of k, for k step ahead prediction test")
+    parser.add_argument("--decoder-freeze-prob", type=float, default=0.0, help="probability of freezing decoder weights")
 
     args = parser.parse_args()
 

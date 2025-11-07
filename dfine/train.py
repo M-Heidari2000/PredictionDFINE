@@ -126,6 +126,11 @@ def train_backbone(
         optimizer.zero_grad()
         total_loss.backward()
 
+        # freeze decoder parameters with some probability
+        if torch.rand(()) < args.decoder_freeze_prob:
+            for p in decoder.parameters():
+                p.grad = None
+
         clip_grad_norm_(all_params, args.clip_grad_norm)
         optimizer.step()
 
