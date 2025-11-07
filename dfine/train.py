@@ -40,7 +40,6 @@ def train_backbone(
 
     dynamics_model = Dynamics(
         x_dim=args.x_dim,
-        u_dim=train_buffer.u_dim,
         a_dim=args.a_dim,
     ).to(device)
 
@@ -74,7 +73,7 @@ def train_backbone(
         # initial belief over x0: N(0, I)
         posterior_dist = MultivariateNormal(
             loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-            covariance_matrix=torch.eye(args.x_dim, device=device).expand([args.batch_size, 1, 1])
+            covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
         )
         y_pred_loss = 0.0
         y_filter_loss = 0.0
@@ -158,7 +157,7 @@ def train_backbone(
                 # initial belief over x0: N(0, I)
                 posterior_dist = MultivariateNormal(
                     loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-                    covariance_matrix=torch.eye(args.x_dim, device=device).expand([args.batch_size, 1, 1])
+                    covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
                 )
                 y_pred_loss = 0.0
                 y_filter_loss = 0.0
@@ -276,7 +275,7 @@ def train_z_decoder(
         # initial belief over x0: N(0, I)
         posterior_dist = MultivariateNormal(
             loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-            covariance_matrix=torch.eye(args.x_dim, device=device).expand([args.batch_size, 1, 1])
+            covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
         )
         z_filter_loss = 0.0
 
@@ -316,7 +315,7 @@ def train_z_decoder(
                 # initial belief over x0: N(0, I)
                 posterior_dist = MultivariateNormal(
                     loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-                    covariance_matrix=torch.eye(args.x_dim, device=device).expand([args.batch_size, 1, 1])
+                    covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
                 )
                 z_filter_loss = 0.0
 
