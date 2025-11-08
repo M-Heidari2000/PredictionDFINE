@@ -46,6 +46,8 @@ if __name__ == "__main__":
     parser.add_argument("--filtering-weight", type=float, default=1.0, help="weight for the filtering in the loss")
     parser.add_argument("--test-k", nargs="+", type=int, help="a list of k, for k step ahead prediction test")
     parser.add_argument("--decoder-freeze-prob", type=float, default=0.0, help="probability of freezing decoder weights")
+    parser.add_argument("--mean-consistency-weight", type=float, default=0.0, help="weight of mean consistency in loss")
+    parser.add_argument("--kl-consistency-weight", type=float, default=0.0, help="weight of kl consistency in loss")
 
     args = parser.parse_args()
 

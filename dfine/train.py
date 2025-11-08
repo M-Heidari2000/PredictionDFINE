@@ -125,7 +125,12 @@ def train_backbone(
         mean_consistency /= (args.chunk_length - args.prediction_k - 1)
         kl_consistency /= (args.chunk_length - args.prediction_k - 1)
 
-        total_loss = y_pred_loss + args.filtering_weight * y_filter_loss
+        total_loss = (
+            y_pred_loss +
+            args.filtering_weight * y_filter_loss +
+            args.mean_consistency_weight * mean_consistency +
+            args.kl_consistency_weight * kl_consistency
+        )
 
         optimizer.zero_grad()
         total_loss.backward()
@@ -215,8 +220,13 @@ def train_backbone(
                 mean_consistency /= (args.chunk_length - args.prediction_k - 1)
                 kl_consistency /= (args.chunk_length - args.prediction_k - 1)
 
-                total_loss = y_pred_loss + args.filtering_weight * y_filter_loss
-
+                total_loss = (
+                    y_pred_loss +
+                    args.filtering_weight * y_filter_loss +
+                    args.mean_consistency_weight * mean_consistency +
+                    args.kl_consistency_weight * kl_consistency
+                )
+                
                 wandb.log({
                     "test/y prediction loss": y_pred_loss.item(),
                     "test/y filter loss": y_filter_loss.item(),
