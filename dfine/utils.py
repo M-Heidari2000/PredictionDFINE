@@ -27,7 +27,8 @@ def compute_consistency(
     prior_mean = prior.loc
     posterior_mean = posterior.loc
     mean_consistency = (
-        (prior_mean - posterior_mean).norm(dim=1, p=2) / (prior_mean.norm(dim=1, p=2) + 1e-6)
+        2 * (prior_mean - posterior_mean).norm(dim=1, p=2) /
+        (prior_mean.norm(dim=1, p=2) + posterior_mean.norm(dim=1, p=2)  + 1e-6)
     ).mean()
     kl_consistency = kl_divergence(posterior, prior).mean()
 
