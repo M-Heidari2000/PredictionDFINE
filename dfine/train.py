@@ -52,6 +52,10 @@ def train_backbone(
     )
 
     optimizer = torch.optim.Adam(all_params, lr=args.lr, eps=args.eps, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer,
+        T_max=args.num_updates
+    )
 
     # train and test loop
     print(f"training on {device} ...")
@@ -133,6 +137,7 @@ def train_backbone(
 
         clip_grad_norm_(all_params, args.clip_grad_norm)
         optimizer.step()
+        scheduler.step()
 
         wandb.log({
             "train/y prediction loss": y_pred_loss.item(),
@@ -260,6 +265,10 @@ def train_z_decoder(
 
     all_params = list(z_decoder.parameters())
     optimizer = torch.optim.Adam(all_params, lr=args.lr, eps=args.eps, weight_decay=args.weight_decay)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer=optimizer,
+        T_max=args.num_updates
+    )
 
     # train and test loop
     print(f"training on {device} ...")
@@ -296,6 +305,7 @@ def train_z_decoder(
 
         clip_grad_norm_(all_params, args.clip_grad_norm)
         optimizer.step()
+        scheduler.step()
 
         wandb.log({
             "train/z filter loss": z_filter_loss.item(),
