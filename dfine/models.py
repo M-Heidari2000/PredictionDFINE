@@ -122,19 +122,31 @@ class Dynamics(nn.Module):
     def __init__(
         self,
         x_dim: int,
+        u_dim: int,
         a_dim: int,
+        hidden_dim: Optional[int]=128,
         min_var: float=1e-4,
     ):
         super().__init__()
 
         self.x_dim = x_dim
+        self.u_dim = u_dim
         self.a_dim = a_dim
         self._min_var = min_var
 
-        self.A = nn.Parameter(torch.eye(x_dim))
-        self.C = nn.Parameter(torch.randn(a_dim, x_dim))
-        self.nx = nn.Parameter(torch.randn(x_dim))
-        self.na = nn.Parameter(torch.randn(a_dim))
+        self.backbone = nn.Sequential(
+            nn.Linear(x_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+        )
+
+        self.A_head = nn.Linear(hidden_dim, x_dim * x_dim)
+        self.B_head = nn.Linear(hidden_dim, x_dim * u_dim)
+        self.C_head = nn.Linear(hidden_dim, a_dim * x_dim)
+        self.nx_head = nn.Linear(hidden_dim, x_dim)
+        self.na_head = nn.Linear(hidden_dim, a_dim)
+        self.alpha = nn.Parameter(torch.tensor([1e-2]))
 
     def make_psd(self, P, eps=1e-6):
         b = P.shape[0]
@@ -147,19 +159,21 @@ class Dynamics(nn.Module):
             get dynamics matrices depending on the state x
         """
         b = x.shape[0]
-        A = self.A.expand(b, -1, -1)
-        C = self.C.expand(b, -1, -1)
-        Nx = torch.diag_embed(nn.functional.softplus(self.nx) + self._min_var).expand(b, -1, -1)
-        Na = torch.diag_embed(nn.functional.softplus(self.na) + self._min_var).expand(b, -1, -1)
+        hidden = self.backbone(x)
+        I = torch.eye(self.x_dim, device=x.device).expand([b, -1, -1])
+        A = I + self.alpha * self.A_head(hidden).reshape(b, self.x_dim, self.x_dim)
+        B = self.B_head(hidden).reshape(b, self.x_dim, self.u_dim)
+        C = self.C_head(hidden).reshape(b, self.a_dim, self.x_dim)
+        Nx = torch.diag_embed(nn.functional.softplus(self.nx_head(hidden)) + self._min_var)
+        Na = torch.diag_embed(nn.functional.softplus(self.na_head(hidden)) + self._min_var)
+        return A, B, C, Nx, Na
 
-        return A, C, Nx, Na
-    
     def get_a(self, x):
         """
         returns emissions (a) based on the input state (x)
         """
 
-        A, C, Nx, Na = self.get_dynamics(x=x)
+        _, C, _, _ = self.get_dynamics(x=x)
         return torch.einsum('bij,bj->bi', C, x)
 
     def dynamics_update(
