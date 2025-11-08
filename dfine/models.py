@@ -122,7 +122,6 @@ class Dynamics(nn.Module):
     def __init__(
         self,
         x_dim: int,
-        u_dim: int,
         a_dim: int,
         hidden_dim: Optional[int]=128,
         min_var: float=1e-4,
@@ -130,7 +129,6 @@ class Dynamics(nn.Module):
         super().__init__()
 
         self.x_dim = x_dim
-        self.u_dim = u_dim
         self.a_dim = a_dim
         self._min_var = min_var
 
@@ -142,7 +140,6 @@ class Dynamics(nn.Module):
         )
 
         self.A_head = nn.Linear(hidden_dim, x_dim * x_dim)
-        self.B_head = nn.Linear(hidden_dim, x_dim * u_dim)
         self.C_head = nn.Linear(hidden_dim, a_dim * x_dim)
         self.nx_head = nn.Linear(hidden_dim, x_dim)
         self.na_head = nn.Linear(hidden_dim, a_dim)
@@ -162,11 +159,10 @@ class Dynamics(nn.Module):
         hidden = self.backbone(x)
         I = torch.eye(self.x_dim, device=x.device).expand([b, -1, -1])
         A = I + self.alpha * self.A_head(hidden).reshape(b, self.x_dim, self.x_dim)
-        B = self.B_head(hidden).reshape(b, self.x_dim, self.u_dim)
         C = self.C_head(hidden).reshape(b, self.a_dim, self.x_dim)
         Nx = torch.diag_embed(nn.functional.softplus(self.nx_head(hidden)) + self._min_var)
         Na = torch.diag_embed(nn.functional.softplus(self.na_head(hidden)) + self._min_var)
-        return A, B, C, Nx, Na
+        return A, C, Nx, Na
 
     def get_a(self, x):
         """
