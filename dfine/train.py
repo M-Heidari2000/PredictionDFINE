@@ -266,7 +266,7 @@ def train_z_decoder(
         # convert to tensor, transform to device, reshape to time-first
         y = torch.as_tensor(y, device=device)
         y = einops.rearrange(y, "b l y -> l b y")
-        a = encoder(einops.rearrange(y, "l b y -> (l b) y")).loc
+        a = encoder(einops.rearrange(y, "l b y -> (l b) y")).sample()
         a = einops.rearrange(a, "(l b) a -> l b a", b=args.batch_size)
         z = torch.as_tensor(z, device=device)
         z = einops.rearrange(z, "b l z -> l b z")
@@ -307,7 +307,7 @@ def train_z_decoder(
                 # convert to tensor, transform to device, reshape to time-first
                 y = torch.as_tensor(y, device=device)
                 y = einops.rearrange(y, "b l y -> l b y")
-                a = encoder(einops.rearrange(y, "l b y -> (l b) y")).loc
+                a = encoder(einops.rearrange(y, "l b y -> (l b) y")).sample()
                 a = einops.rearrange(a, "(l b) a -> l b a", b=args.batch_size)
                 z = torch.as_tensor(z, device=device)
                 z = einops.rearrange(z, "b l z -> l b z")
