@@ -167,6 +167,9 @@ class Dynamics(nn.Module):
         P = P + eps * torch.eye(P.size(-1), device=P.device).expand([b, -1, -1])
         return P
     
+    def get_a(self, x):
+        return torch.einsum('bij,bj->bi', self.C, x)
+
     def dynamics_update(
         self,
         dist: MultivariateNormal,
@@ -214,7 +217,7 @@ class Dynamics(nn.Module):
         next_cov = self.make_psd(next_cov)
 
         return MultivariateNormal(loc=next_mean, covariance_matrix=next_cov)
-    
+
     def posterior_step(
         self,
         dist: MultivariateNormal,
