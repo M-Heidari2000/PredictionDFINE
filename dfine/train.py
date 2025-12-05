@@ -103,7 +103,7 @@ def train_backbone(
             loss2 += dynamics_model.compute_kl_loss(
                 past_q_x=past_q_x,
                 current_q_x=current_q_x,
-                d=args.overshooting_d,
+                d=args.overshoot_d,
             ).clamp(min=args.kl_free_nats).mean()
 
             # third loss term
@@ -185,7 +185,7 @@ def train_backbone(
                     loss2 += dynamics_model.compute_kl_loss(
                         past_q_x=past_q_x,
                         current_q_x=current_q_x,
-                        d=args.overshooting_d,
+                        d=args.overshoot_d,
                     ).clamp(min=args.kl_free_nats).mean()
 
                     # third loss term

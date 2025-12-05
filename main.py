@@ -34,7 +34,7 @@ if __name__ == "__main__":
     parser.add_argument("--hidden-dim", type=int, default=128, help="hidden layer dimension for encoder and decoder")
     parser.add_argument("--min-var", type=float, default=1e-2, help="minimum var for states")
     parser.add_argument("--chunk-length", type=int, default=50, help="length of chunks used for the update step")
-    parser.add_argument("--overshooting-d", type=int, default=24, help="number of future steps prediction")
+    parser.add_argument("--overshoot-d", type=int, default=24, help="number of future steps prediction")
     parser.add_argument("--batch-size", type=int, default=128, help="batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="learning rate")
     parser.add_argument("--eps", type=float, default=1e-8, help="epsilon for optimizer")
