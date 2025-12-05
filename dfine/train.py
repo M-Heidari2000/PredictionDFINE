@@ -7,7 +7,6 @@ from pathlib import Path
 from argparse import Namespace
 from torch.distributions import MultivariateNormal
 from .memory import ReplayBuffer
-from .utils import compute_consistency
 from torch.nn.utils import clip_grad_norm_
 from .models import (
     Encoder,
@@ -61,180 +60,156 @@ def train_backbone(
     print(f"training on {device} ...")
     for update in tqdm(range(args.num_updates)):
         
-        # train
-        encoder.train()
-        decoder.train()
-        dynamics_model.train()
-
         y, _, _ = train_buffer.sample(batch_size=args.batch_size, chunk_length=args.chunk_length)
-
         # convert to tensor, transform to device, reshape to time-first
         y = torch.as_tensor(y, device=device)
         y = einops.rearrange(y, "b l y -> l b y")
-        a = encoder(einops.rearrange(y, "l b y -> (l b) y"))
-        a = einops.rearrange(a, "(l b) a -> l b a", b=args.batch_size)
-
-        # initial belief over x0: N(0, I)
-        posterior_dist = MultivariateNormal(
-            loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-            covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
-        )
-        y_pred_loss = 0.0
-        y_filter_loss = 0.0
-        mean_consistency = 0.0
-        kl_consistency = 0.0
-
-        for t in range(1, args.chunk_length - args.prediction_k):
-            prior_dist = dynamics_model.dynamics_update(dist=posterior_dist)
-            posterior_dist = dynamics_model.measurement_update(dist=prior_dist, a=a[t])
-            consistencies = compute_consistency(prior=prior_dist, posterior=posterior_dist)
-            mean_consistency += consistencies[0]
-            kl_consistency += consistencies[1]
-
-            filter_a = dynamics_model.get_a(posterior_dist.loc)
-            y_filter_loss += nn.MSELoss()(decoder(filter_a), y[t])
-
-            # tensors to hold predictions of future ys
-            pred_y = torch.zeros((args.prediction_k, args.batch_size, train_buffer.y_dim), device=device)
-
-            pred_dist = posterior_dist
-
-            for k in range(args.prediction_k):
-                pred_dist = dynamics_model.dynamics_update(dist=pred_dist)
-                pred_a = dynamics_model.get_a(pred_dist.loc)
-                pred_y[k] = decoder(pred_a)
-
-            true_y = y[t+1: t+1+args.prediction_k]
-            true_y_flatten = einops.rearrange(true_y, "k b y -> (k b) y")
-            pred_y_flatten = einops.rearrange(pred_y, "k b y -> (k b) y")
-            y_pred_loss += nn.MSELoss()(pred_y_flatten, true_y_flatten)
-
-        # y prediction loss
-        y_pred_loss /= (args.chunk_length - args.prediction_k - 1)
-
-        # y filter loss
-        y_filter_loss /= (args.chunk_length - args.prediction_k - 1)
-
-        # autoencoder loss
-        a_flatten = einops.rearrange(a, "l b a -> (l b) a")
-        y_flatten = einops.rearrange(y, "l b y -> (l b) y")
-        y_recon = decoder(a_flatten)
-        ae_loss = nn.MSELoss()(y_recon, y_flatten)
-
-        # consistency loss
-        mean_consistency /= (args.chunk_length - args.prediction_k - 1)
-        kl_consistency /= (args.chunk_length - args.prediction_k - 1)
-
-        total_loss = (
-            y_pred_loss +
-            args.filtering_weight * y_filter_loss +
-            args.mean_consistency_weight * mean_consistency +
-            args.kl_consistency_weight * kl_consistency
+        q_a_samples = encoder(einops.rearrange(y, "l b y -> (l b) y")).rsample()
+        q_a_samples = einops.rearrange(
+            q_a_samples,
+            "(l b) a -> l b a",
+            b=args.batch_size
         )
 
+        # Initial distribution N(0, I)
+        q_x = [MultivariateNormal(
+            loc=torch.zeros((args.batch_size, args.x_dim), dtype=torch.float32, device=device),
+            covariance_matrix=torch.diag_embed(torch.ones((args.batch_size, args.x_dim), device=device, dtype=torch.float32)),
+        ) for _ in range(args.chunk_length)] 
+
+        # Kalman filtering
+        for t in range(1, args.chunk_length):
+            q_x[t] = dynamics_model.posterior_step(
+                dist=q_x[t-1],
+                a=q_a_samples[t],
+            )
+        
+        loss1 = 0.0
+        loss2 = 0.0
+        loss3 = 0.0
+
+        for t in range(args.overshoot_d+1, args.chunk_length):
+            # first loss term
+            y_recon = decoder(q_a_samples[t])
+            loss1 += nn.MSELoss()(y_recon, y[t])
+
+            # second loss term
+            # q(x_{t-d}|a_{1:t-d}, u_{0:t-d-1})
+            past_q_x = q_x[t-args.overshoot_d]
+
+            # q(x_t|a_{1:t}, u_{0:t-1})
+            current_q_x = q_x[t]
+
+            loss2 += dynamics_model.compute_kl_loss(
+                past_q_x=past_q_x,
+                current_q_x=current_q_x,
+                d=args.overshooting_d,
+            ).clamp(min=args.kl_free_nats).mean()
+
+            # third loss term
+            # q_a
+            current_q_a = encoder(y[t])
+            
+            loss3 += dynamics_model.compute_logratio_loss(
+                current_q_x=current_q_x,
+                current_q_a=current_q_a,
+                current_q_a_sample=q_a_samples[t],
+            ).clamp(min=args.a_free_nats).mean()
+
+        loss1 /= (args.chunk_length - args.overshoot_d - 1)
+        loss2 /= (args.chunk_length - args.overshoot_d - 1)
+        loss3 /= (args.chunk_length - args.overshoot_d - 1)
+
+        loss = loss1 + args.kl_beta * loss2 + args.a_beta * loss3
         optimizer.zero_grad()
-        total_loss.backward()
-
-        # freeze decoder parameters with some probability
-        if torch.rand(()) < args.decoder_freeze_prob:
-            for p in decoder.parameters():
-                p.grad = None
-
+        loss.backward()
         clip_grad_norm_(all_params, args.clip_grad_norm)
         optimizer.step()
         scheduler.step()
 
         wandb.log({
-            "train/y prediction loss": y_pred_loss.item(),
-            "train/y filter loss": y_filter_loss.item(),
-            "train/ae loss": ae_loss.item(),
-            "train/total loss": total_loss.item(),
-            "train/mean consistency": mean_consistency.item(),
-            "train/kl consistency": kl_consistency.item(),
-            "global_step": update,
+            "train/loss1": loss1.item(),
+            "train/loss2": loss2.item(),
+            "train/loss3": loss3.item(),
+            "train/total loss": loss.item(),
+            "global_step": update+1,
         })
-            
+
+        # test
         if update % args.test_interval == 0:
-            # test
+            encoder.eval()
+            decoder.eval()
+            dynamics_model.eval()
+
             with torch.no_grad():
-                encoder.eval()
-                decoder.eval()
-                dynamics_model.eval()
-
-                y, _, _ = test_buffer.sample(batch_size=args.batch_size, chunk_length=args.chunk_length)
-
+                y, _, _= test_buffer.sample(batch_size=args.batch_size, chunk_length=args.chunk_length)
                 # convert to tensor, transform to device, reshape to time-first
                 y = torch.as_tensor(y, device=device)
                 y = einops.rearrange(y, "b l y -> l b y")
-                a = encoder(einops.rearrange(y, "l b y -> (l b) y"))
-                a = einops.rearrange(a, "(l b) a -> l b a", b=args.batch_size)
-
-                # initial belief over x0: N(0, I)
-                posterior_dist = MultivariateNormal(
-                    loc=torch.zeros((args.batch_size, args.x_dim), device=device),
-                    covariance_matrix=torch.eye(args.x_dim, device=device).expand(args.batch_size, -1, -1)
+                q_a_samples = encoder(einops.rearrange(y, "l b y -> (l b) y")).rsample()
+                q_a_samples = einops.rearrange(
+                    q_a_samples,
+                    "(l b) a -> l b a",
+                    b=args.batch_size
                 )
-                y_pred_loss = 0.0
-                y_filter_loss = 0.0
-                mean_consistency = 0.0
-                kl_consistency = 0.0
 
-                for t in range(1, args.chunk_length - args.prediction_k):
-                    prior_dist = dynamics_model.dynamics_update(dist=posterior_dist)
-                    posterior_dist = dynamics_model.measurement_update(dist=prior_dist, a=a[t])
-                    consistencies = compute_consistency(prior=prior_dist, posterior=posterior_dist)
-                    mean_consistency += consistencies[0]
-                    kl_consistency += consistencies[1]
+                # Initial distribution N(0, I)
+                q_x = [MultivariateNormal(
+                    loc=torch.zeros((args.batch_size, args.x_dim), dtype=torch.float32, device=device),
+                    covariance_matrix=torch.diag_embed(torch.ones((args.batch_size, args.x_dim), device=device, dtype=torch.float32)),
+                ) for _ in range(args.chunk_length)]
 
-                    filter_a = dynamics_model.get_a(posterior_dist.loc)
-                    y_filter_loss += nn.MSELoss()(decoder(filter_a), y[t])
-
-                    # tensors to hold predictions of future ys
-                    pred_y = torch.zeros((args.prediction_k, args.batch_size, train_buffer.y_dim), device=device)
-
-                    pred_dist = posterior_dist
-
-                    for k in range(args.prediction_k):
-                        pred_dist = dynamics_model.dynamics_update(dist=pred_dist)
-                        pred_a = dynamics_model.get_a(pred_dist.loc)
-                        pred_y[k] = decoder(pred_a)
-
-                    true_y = y[t+1: t+1+args.prediction_k]
-                    true_y_flatten = einops.rearrange(true_y, "k b y -> (k b) y")
-                    pred_y_flatten = einops.rearrange(pred_y, "k b y -> (k b) y")
-                    y_pred_loss += nn.MSELoss()(pred_y_flatten, true_y_flatten)
-
-                # y prediction loss
-                y_pred_loss /= (args.chunk_length - args.prediction_k - 1)
-
-                # y filter loss
-                y_filter_loss /= (args.chunk_length - args.prediction_k - 1)
-
-                # autoencoder loss
-                a_flatten = einops.rearrange(a, "l b a -> (l b) a")
-                y_flatten = einops.rearrange(y, "l b y -> (l b) y")
-                y_recon = decoder(a_flatten)
-                ae_loss = nn.MSELoss()(y_recon, y_flatten)
-
-                # consistency loss
-                mean_consistency /= (args.chunk_length - args.prediction_k - 1)
-                kl_consistency /= (args.chunk_length - args.prediction_k - 1)
-
-                total_loss = (
-                    y_pred_loss +
-                    args.filtering_weight * y_filter_loss +
-                    args.mean_consistency_weight * mean_consistency +
-                    args.kl_consistency_weight * kl_consistency
-                )
+                # Kalman filtering
+                for t in range(1, args.chunk_length):
+                    q_x[t] = dynamics_model.posterior_step(
+                        dist=q_x[t-1],
+                        a=q_a_samples[t],
+                    )
                 
+                loss1 = 0.0
+                loss2 = 0.0
+                loss3 = 0.0
+
+                for t in range(args.overshoot_d+1, args.chunk_length):
+                    # first loss term
+                    y_recon = decoder(q_a_samples[t])
+                    loss1 += nn.MSELoss()(y_recon, y[t])
+
+                    # second loss term
+                    # q(x_{t-d}|a_{1:t-d}, u_{0:t-d-1})
+                    past_q_x = q_x[t-args.overshoot_d]
+
+                    # q(x_t|a_{1:t}, u_{0:t-1})
+                    current_q_x = q_x[t]
+
+                    loss2 += dynamics_model.compute_kl_loss(
+                        past_q_x=past_q_x,
+                        current_q_x=current_q_x,
+                        d=args.overshooting_d,
+                    ).clamp(min=args.kl_free_nats).mean()
+
+                    # third loss term
+                    # q_a
+                    current_q_a = encoder(y[t])
+                    
+                    loss3 += dynamics_model.compute_logratio_loss(
+                        current_q_x=current_q_x,
+                        current_q_a=current_q_a,
+                        current_q_a_sample=q_a_samples[t],
+                    ).clamp(min=args.a_free_nats).mean()
+
+                loss1 /= (args.chunk_length - args.overshoot_d - 1)
+                loss2 /= (args.chunk_length - args.overshoot_d - 1)
+                loss3 /= (args.chunk_length - args.overshoot_d - 1)
+
+                loss = loss1 + args.kl_beta * loss2 + args.a_beta * loss3
+
                 wandb.log({
-                    "test/y prediction loss": y_pred_loss.item(),
-                    "test/y filter loss": y_filter_loss.item(),
-                    "test/ae loss": ae_loss.item(),
-                    "test/total loss": total_loss.item(),
-                    "test/mean consistency": mean_consistency.item(),
-                    "test/kl consistency": kl_consistency.item(),
-                    "global_step": update,
+                    "test/loss1": loss1.item(),
+                    "test/loss2": loss2.item(),
+                    "test/loss3": loss3.item(),
+                    "test/total loss": loss.item(),
+                    "global_step": update+1,
                 })
                 
 
