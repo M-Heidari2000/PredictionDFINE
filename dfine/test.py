@@ -41,7 +41,7 @@ def test_k_step_prediction(
         L, B, y_dim = y.shape
         _, _, z_dim = z.shape
 
-        a = encoder(einops.rearrange(y, "l b y -> (l b) y"))
+        a = encoder(einops.rearrange(y, "l b y -> (l b) y")).loc
         a = einops.rearrange(a, "(l b) a -> l b a", b=B)
 
         y_pred = torch.zeros(
