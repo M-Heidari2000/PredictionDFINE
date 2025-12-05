@@ -86,7 +86,43 @@ class Decoder(nn.Module):
 
     def forward(self, a):
         return self.mlp_layers(a)
-    
+
+
+class ZDecoder(nn.Module):
+    """
+        x_t -> z_t
+    """
+
+    def __init__(
+        self,
+        x_dim: int,
+        z_dim: int,
+        hidden_dim: Optional[int]=None,
+    ):
+        super().__init__()
+
+        hidden_dim = hidden_dim if hidden_dim is not None else 2*x_dim
+
+        self.mlp_layers = nn.Sequential(
+            nn.Linear(x_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, z_dim),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    init.zeros_(m.bias)
+
+    def forward(self, x):
+        return self.mlp_layers(x)
+
 
 class Dynamics(nn.Module):
     
