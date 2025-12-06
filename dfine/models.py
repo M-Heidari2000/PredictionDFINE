@@ -168,7 +168,7 @@ class Dynamics(nn.Module):
         return P
     
     def get_a(self, x):
-        return torch.einsum('bij,bj->bi', self.C, x)
+        return x @ self.C.T
 
     def dynamics_update(
         self,
