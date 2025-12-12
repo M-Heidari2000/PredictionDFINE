@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 from torch.distributions import MultivariateNormal
+from torch.distributions.kl import kl_divergence
 import torch.nn.init as init
 
 
@@ -249,45 +250,17 @@ class Dynamics(nn.Module):
                 d: overshooting distance
         """
         
-        mu_p = past_q_x.loc
-        sigma_p = past_q_x.covariance_matrix
-        mu_x = current_q_x.loc
-        sigma_x = current_q_x.covariance_matrix
-
-        mu_d_bar = mu_p
-        sigma_d = torch.zeros_like(past_q_x.covariance_matrix)
+        pred_mu = past_q_x.loc
+        pred_sigma = past_q_x.covariance_matrix
 
         for t in range(d):
-            mu_d_bar = mu_d_bar @ self.A.T
-            sigma_d = self.A @ sigma_d @ self.A.T + self.Nx
+            pred_mu = pred_mu @ self.A.T
+            pred_sigma = self.A @ pred_sigma @ self.A.T + self.Nx
 
-        sigma_d = self.make_psd(sigma_d)
-        sigma_d_inv = torch.linalg.pinv(sigma_d)
+        pred_sigma = self.make_psd(pred_sigma)
+        pred_dist = MultivariateNormal(loc=pred_mu, covariance_matrix=pred_sigma)
 
-        # logdet term
-        logdet = sigma_d.logdet() - sigma_x.logdet()
-
-        # trace 1 term
-        trc1 = torch.einsum("bij,bji->b", sigma_d_inv, sigma_x)
-
-        # trace 2 term
-        A_d = self.A.matrix_power(d)
-        trc2 = torch.einsum(
-            "bij,bji->b",
-            sigma_d_inv,
-            A_d @ sigma_p @ A_d.T
-        )
-
-        # quad term
-        delta = mu_d_bar - mu_x
-        quad = torch.einsum(
-            "bi,bij,bj->b",
-            delta,
-            sigma_d_inv,
-            delta
-        )
-
-        return 0.5 * (logdet + trc1 + trc2 + quad)
+        return kl_divergence(current_q_x, pred_dist)
 
 
     def compute_logratio_loss(
