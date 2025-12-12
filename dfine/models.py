@@ -20,13 +20,7 @@ class Encoder(nn.Module):
 
         hidden_dim = hidden_dim if hidden_dim is not None else 2*y_dim
 
-        self.mlp_layers = nn.Sequential(
-            nn.Linear(y_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, a_dim),
-        )
+        self.mlp_layers = nn.Linear(y_dim, a_dim)
 
         self._init_weights()
 
@@ -56,13 +50,7 @@ class Decoder(nn.Module):
 
         hidden_dim = hidden_dim if hidden_dim is not None else 2*a_dim
 
-        self.mlp_layers = nn.Sequential(
-            nn.Linear(a_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, y_dim),
-        )
+        self.mlp_layers = nn.Linear(a_dim, y_dim)
 
         self._init_weights()
 
