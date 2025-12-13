@@ -144,7 +144,7 @@ class Dynamics(nn.Module):
         self._min_var = min_var
 
         # Dynamics matrices
-        self.A = nn.Parameter(torch.eye(self.x_dim))
+        self.M = nn.Parameter(torch.eye(self.x_dim))
         self.C = nn.Parameter(torch.randn(self.a_dim, self.x_dim))
 
         # Transition noise covariance (diagonal)
@@ -161,6 +161,11 @@ class Dynamics(nn.Module):
     def Nx(self):
         Nx = torch.diag(nn.functional.softplus(self.nx) + self._min_var)    # shape: x x
         return Nx
+    
+    @property
+    def A(self):
+        return torch.eye(self.x_dim, device=self.M.device) + 0.1 * self.M
+
 
     def make_psd(self, P, eps=1e-6):
         b = P.shape[0]
